@@ -1,13 +1,31 @@
-################################################################################
-# Pull-ADLS
-#
-# Authors:     Justin McCormick, Caleb Gross
-#
-# Description: Given a valid UTM code, this script uses your CAC certificates
-#              to pull CBT records from ADLS. Once you've queried ADLS and
-#              pulled the CSV records, this script will parse those files.
-#
-################################################################################
+#requires -version 5
+<#
+.SYNOPSIS
+  Query ADLS for CBT records and parse results.
+.DESCRIPTION
+  This PowerShell script is intended for use by U.S. Air Force Unit Training
+  Managers (UTM). Part of a UTM's regular routine involves querying the
+  Advanced Distributed Learning Service (ADLS) for training records and merging
+  the results with a set of locally-maintained records. Rather than tediously
+  making point-and-click queries by hand, PowerShell enables a UTM to automate
+  the process of pulling and merging ADLS training records.
+.INPUTS
+  .\courses_tracked.txt
+.OUTPUTS
+  .\Training_Records\ADLS_Training.csv
+  .\Certificates\*
+.NOTES
+  Version:        0.2
+  Author:         Justin McCormick, Caleb Gross
+  Creation Date:  Sepember 5, 2017
+  Purpose/Change: Initial script development
+.EXAMPLE
+  .\Pull-ADLS.ps1
+.LINK
+  https://github.com/deptofdefense/Pull-ADLS
+#>
+
+#-------------------------------[Initializations]------------------------------#
 
 # Help with debugging.
 $ErrorActionPreference = 'Stop'
@@ -22,10 +40,13 @@ $certs_folder   = "$PWD\Certificates"
 # Locate user's CAC ID certificate.
 $cert_thumb = (Get-ChildItem "Cert:\CurrentUser\My\" | Where-Object {$_.FriendlyName -like "*id*"}).Thumbprint
 
-# Create session to store cookies between web requests, and add cookies to session.
+# Create session to store cookies between web requests. Add cookies to session.
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $session.cookies.add((New-Object System.Net.Cookie -ArgumentList "AFPORTAL_LOGIN_AGREEMENT","accepted","/","af.mil"))
 $session.cookies.add((New-Object System.Net.Cookie -ArgumentList "BUILDING","Administration","/","golearn.adls.af.mil"))
+
+#---------------------------------[Functions]----------------------------------#
+
 
 function file_exists($file) {
     if (Test-Path "$file") {
@@ -84,7 +105,6 @@ function authenticate() {
         'id'   = $org_id;
         'name' = $org_name;
         }
-
 }
 
 # Build a list of URLs for each tracked course.
@@ -205,7 +225,6 @@ function update_records () {
 	}
 
     return
-
 }
 
 # Check a member's course completion dates.
@@ -334,7 +353,6 @@ function get_user_details($last_name, $first_name) {
     $user_details = @()
     ($user_details_html -split "`n") | %{if ($_ -like "*>$org_name<*" -or $_ -like "*ShowDetails*"){$user_details += $_}}
     return $user_details | %{if($_ -like "*>$org_name<*"){($user_details[([int][array]::IndexOf($user_details,$_)-1)] -split ";")[1] -split "'"}}
-
 }
 
 # Download a course completion certificate.
@@ -519,7 +537,6 @@ function import_csv () {
     } else {
         Write-Host "`n[-] Cannot Find ADLS Training File.  Try Querying First"
     }
-
 }
 
 # TODO: Create CSV template to be imported.
@@ -541,10 +558,7 @@ function create_sample () {
     }
 }
 
-
-######################
-# MAIN PROGRAM START #
-######################
+#---------------------------------[Execution]----------------------------------#
 
 Clear-Host
 Write-Host
