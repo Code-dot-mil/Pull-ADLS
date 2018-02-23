@@ -1,28 +1,28 @@
 #requires -version 5
 <#
 .SYNOPSIS
-  Query ADLS for CBT records and parse results.
+   Query ADLS for CBT records and parse results.
 .DESCRIPTION
-  This PowerShell script is intended for use by U.S. Air Force Unit Training
-  Managers (UTM). Part of a UTM's regular routine involves querying the
-  Advanced Distributed Learning Service (ADLS) for training records and merging
-  the results with a set of locally-maintained records. Rather than tediously
-  making point-and-click queries by hand, PowerShell enables a UTM to automate
-  the process of pulling and merging ADLS training records.
+   This PowerShell script is intended for use by U.S. Air Force Unit Training
+   Managers (UTM). Part of a UTM's regular routine involves querying the
+   Advanced Distributed Learning Service (ADLS) for training records and merging
+   the results with a set of locally-maintained records. Rather than tediously
+   making point-and-click queries by hand, PowerShell enables a UTM to automate
+   the process of pulling and merging ADLS training records.
 .INPUTS
-  .\courses_tracked.txt
+   courses_tracked.txt
 .OUTPUTS
-  .\Training_Records\ADLS_Training.csv
-  .\Certificates\*
+   Training_Records\ADLS_Training.csv
+   Certificates\*
 .NOTES
-  Version:        0.2
-  Author:         Justin McCormick, Caleb Gross
-  Creation Date:  Sepember 5, 2017
-  Purpose/Change: Initial script development
+   Version:        0.2
+   Author:         Justin McCormick, Caleb Gross
+   Creation Date:  Sepember 5, 2017
+   Purpose/Change: Initial script development
 .EXAMPLE
-  .\Pull-ADLS.ps1
+   .\Pull-ADLS.ps1
 .LINK
-  https://github.com/deptofdefense/Pull-ADLS
+   https://github.com/deptofdefense/Pull-ADLS
 #>
 
 #-------------------------------[Initializations]------------------------------#
@@ -45,14 +45,24 @@ $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $session.cookies.add((New-Object System.Net.Cookie -ArgumentList "AFPORTAL_LOGIN_AGREEMENT","accepted","/","af.mil"))
 $session.cookies.add((New-Object System.Net.Cookie -ArgumentList "BUILDING","Administration","/","golearn.adls.af.mil"))
 
-# Import WebsiteToImage C# file.
-$source = Get-Content -Path "$PWD\WebsiteToImage.cs" -Raw
+# Import Csharp file to convert HTML files to JPG images.
+$source     = Get-Content -Path "$PWD\WebsiteToImage.cs" -Raw
 $assemblies = ("System.Drawing", "System.IO", "System.Threading", "System.Windows.Forms")
 Add-Type -TypeDefinition $source -ReferencedAssemblies $assemblies -Language CSharp
 
 #---------------------------------[Functions]----------------------------------#
 
-
+<#
+.DESCRIPTION
+   Check to see if a file exists. Primarily used to determine which options are
+   available for a user at any given moment during the program's execution.
+.INPUTS
+   $file  Path to file.
+.OUTPUTS
+   >0     File exists.
+    0     File exists, but is empty.
+   -1     File does not exist.
+#>
 function file_exists($file) {
     if (Test-Path "$file") {
         Write-Host "[+] Found $file."
@@ -67,9 +77,18 @@ function file_exists($file) {
     }
 }
 
-# Authenticate to Access.asp.
+<#
+.DESCRIPTION
+   Authenticate to ADLS administration page. Cookies from this interaction will
+   be stored in the $session object and should be able to be used for the
+   all remaining HTTP requests.
+.INPUTS
+   None
+.OUTPUTS
+   $org_info  Dictionary containing name and ID of organization.
+#>
 function authenticate() {
-    
+
     # Authenticate to CACRequest.aspx and store resulting cookie. Verify that authentication was successful.
     $url      = "https://golearn.adls.af.mil/CACAuthentication/CACRequest.aspx"
     $cac_auth = Invoke-WebRequest -Uri $url -CertificateThumbprint $cert_thumb -WebSession $session
@@ -104,15 +123,29 @@ function authenticate() {
         AccessCode=$UTM_CODE;
         }
     $utm_auth = Invoke-WebRequest -Uri $url -CertificateThumbprint $cert_thumb -WebSession $session -Headers @{'referer' = $referer} -Method 'POST' -Body $data
-    if ($utm_auth -like "*UTM / UDM - Main Page*") {Write-Host "[+] Successful UTM/UDM authentication."} else {Write-Host "[-] Error authenticationg with supplied UTM code."; exit}
+    if ($utm_auth -like "*UTM / UDM - Main Page*") {
+        Write-Host "[+] Successful UTM/UDM authentication."
+    } else {
+        Write-Host "[-] Error authenticationg with supplied UTM code."
+        exit}
 
-    return @{
+    $org_info = @{
         'id'   = $org_id;
         'name' = $org_name;
         }
+
+    return $org_info
 }
 
-# Build a list of URLs for each tracked course.
+<#
+.DESCRIPTION
+   Build a list of URLs for each tracked course, used when updating course
+   completion records or downloading course completion certificates.
+.INPUTS
+   None
+.OUTPUTS
+   $course_urls  Dictionary mapping course names to URLs.
+#>
 function get_course_urls() {
 
     if ((file_exists $courses_file) -lt 0) {return}
@@ -131,7 +164,15 @@ function get_course_urls() {
     return $course_urls
 }
 
-# Pull records for each tracked course.
+<#
+.DESCRIPTION
+   Build a list of URLs for each tracked course, used when updating course
+   completion records or downloading course completion certificates.
+.INPUTS
+   None
+.OUTPUTS
+   None
+#>
 function update_records() {
 
     if ((file_exists $courses_file) -le 0) {return}
@@ -261,7 +302,15 @@ function update_records() {
     return
 }
 
-# Check a member's course completion dates.
+
+<#
+.DESCRIPTION
+   Print a member's course completion dates to the screen.
+.INPUTS
+   None
+.OUTPUTS
+   None
+#>
 function display_member_dates () {
 
     if ((file_exists $records_file) -lt 0) {return}
@@ -279,9 +328,18 @@ function display_member_dates () {
     # Display user information.
     Clear-Host
     $adls_cont[$chk_user-1] | Format-List
+
+    return
 }
 
-# Download course completion certificate for a single member.
+<#
+.DESCRIPTION
+   Download a course completion certificate for a single member.
+.INPUTS
+   None
+.OUTPUTS
+   None
+#>
 function get_single_certificate() {
 
     if ((file_exists $records_file) -le 0) {return}
@@ -340,10 +398,20 @@ function get_single_certificate() {
         'id' = $cert_links[$menu_sel-1];
         'folder' = $course_folder; 
     }
+
     download_certificate $user_info $course_info
+
+    return
 }
 
-# Download course completion certificate for all members.
+<#
+.DESCRIPTION
+   Download a course completion certificate for all members in organization.
+.INPUTS
+   None
+.OUTPUTS
+   None
+#>
 function get_batch_certificates () {
 
     if ((file_exists $records_file) -le 0) {return}
@@ -391,11 +459,21 @@ function get_batch_certificates () {
         }
 
         download_certificate $user_info $course_info
-                
     }
+
+    return
 }
 
-# Get a member's detailed information.
+<#
+.DESCRIPTION
+   Get a member's detailed information. Used to build URL when downloading
+   course completion certificates.
+.INPUTS
+   $last_name     Member's last name.
+   $first_name    Member's first name.
+.OUTPUTS
+   $user_details  User ID and result number. 
+#>
 function get_user_details($last_name, $first_name) {
 
     # Get member details.
@@ -411,7 +489,15 @@ function get_user_details($last_name, $first_name) {
     return $user_details | %{if($_ -like "*>$org_name<*"){($user_details[([int][array]::IndexOf($user_details,$_)-1)] -split ";")[1] -split "'"}}
 }
 
-# Download a course completion certificate.
+<#
+.DESCRIPTION
+   Download a course completion certificate in HTML form and convert it to JPG.
+.INPUTS
+   $user_info    Dictionary containing user ID and name.
+   $course_info  Dictionary containing course ID and folder name.
+.OUTPUTS
+   None
+#>
 function download_certificate($user_info, $course_info) {
 
     if ((file_exists $certs_folder) -le 0) {
