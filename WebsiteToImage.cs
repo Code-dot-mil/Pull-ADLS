@@ -1,5 +1,11 @@
-
-// Source: https://stackoverflow.com/questions/2715385/convert-webpage-to-image-from-asp-net/27379792
+///------------------------------------------------------------------------------------------------------
+///   Source:  Stack Overflow
+///            https://stackoverflow.com/questions/2715385/convert-webpage-to-image-from-asp-net/27379792
+///   Author:  Keith Adler
+///            https://stackoverflow.com/users/135952/keith-adler
+///   License: CC BY-SA 3.0
+///            https://creativecommons.org/licenses/by-sa/3.0
+///------------------------------------------------------------------------------------------------------
 
 using System.Drawing;
 using System.Drawing.Imaging;
