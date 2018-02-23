@@ -45,6 +45,11 @@ $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $session.cookies.add((New-Object System.Net.Cookie -ArgumentList "AFPORTAL_LOGIN_AGREEMENT","accepted","/","af.mil"))
 $session.cookies.add((New-Object System.Net.Cookie -ArgumentList "BUILDING","Administration","/","golearn.adls.af.mil"))
 
+# Import WebsiteToImage C# file.
+$source = Get-Content -Path "$PWD\WebsiteToImage.cs" -Raw
+$assemblies = ("System.Drawing", "System.IO", "System.Threading", "System.Windows.Forms")
+Add-Type -TypeDefinition $source -ReferencedAssemblies $assemblies -Language CSharp
+
 #---------------------------------[Functions]----------------------------------#
 
 
@@ -127,7 +132,7 @@ function get_course_urls() {
 }
 
 # Pull records for each tracked course.
-function update_records () {
+function update_records() {
 
     if ((file_exists $courses_file) -le 0) {return}
 
@@ -142,19 +147,48 @@ function update_records () {
 
     # Download HTML file at each course URL.
     $course_urls = get_course_urls
-    $referer     = "https://golearn.adls.af.mil/kc/doza.tools/functions/UTMUDM/OrgGroupReport/OrgGroupReportByCourse.asp"
+
     Write-Host "[*] Running queries..."
+    $query_course = {
+        Param ($course_url,$cert_thumb,$outfile,$UTM_CODE,$org_id,$org_name)
+        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        $session.cookies.add((New-Object System.Net.Cookie -ArgumentList "AFPORTAL_LOGIN_AGREEMENT","accepted","/","af.mil"))
+        $session.cookies.add((New-Object System.Net.Cookie -ArgumentList "BUILDING","Administration","/","golearn.adls.af.mil"))
+        $url      = "https://golearn.adls.af.mil/CACAuthentication/CACRequest.aspx"
+        Invoke-WebRequest -Uri $url -CertificateThumbprint $cert_thumb -WebSession $session | Out-Null
+        $url         = "https://golearn.adls.af.mil/kc/doza.tools/functions/UTMUDM/Access.asp"
+        $referer     = "https://golearn.adls.af.mil/kc/admin/faculty_lounge_ttl.asp?table=&function=faculty_lounge"
+        $data = @{
+            agreement='agreed';
+            actionDo='Access';
+            Org_ID=$org_id;
+            OrgName=$org_name;
+            FirstTime='False';
+            AccessCode=$UTM_CODE;
+        }
+        Invoke-WebRequest -Uri $url -CertificateThumbprint $cert_thumb -WebSession $session -Headers @{'referer' = $referer} -Method 'POST' -Body $data | Out-Null
+        $referer = "https://golearn.adls.af.mil/kc/doza.tools/functions/UTMUDM/OrgGroupReport/OrgGroupReportByCourse.asp"
+        Invoke-WebRequest -Uri $course_url -CertificateThumbprint $cert_thumb -WebSession $session -Headers @{'referer' = $referer} -OutFile $outfile
+    }
 	Try {
         foreach ($course_name in $course_urls.Keys) {
             $course_url = $course_urls.Item($course_name)
             $outfile    = "$records_folder/" + ($course_name -replace $unsafe_chars,"") + ".html"
             Write-Host "    $course_name"
-            Invoke-WebRequest -Uri $course_url -CertificateThumbprint $cert_thumb -WebSession $session -Headers @{'referer' = $referer} -OutFile $outfile
+            if ($global:UTM_CODE -eq $null) {
+	            $global:UTM_CODE = Read-Host "    Enter UTM code" -AsSecureString
+	            $global:UTM_CODE = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($UTM_CODE))
+            }
+            Start-Job -ScriptBlock $query_course -ArgumentList $course_url,$cert_thumb,$outfile,$UTM_CODE,$org_info.Item('id'),$org_info.Item('name') | Out-Null
         }
+        
 	}
 	Catch {
 		Write-Host "[-] Error running queries."
 	}
+
+    # Wait for all queries to finish.
+    while ((Get-Job).state -eq "Running"){}
 
     # Load HTML files into dictionary.
 	$user_dict = @{}
@@ -293,10 +327,20 @@ function get_single_certificate() {
         Write-Host "[-] Invalid selection."
         break :menu
     }
-    $course_id = $cert_links[$menu_sel-1]
+    
+    $course_folder = "$certs_folder\"+($cert_name[$menu_sel-1] -replace $unsafe_chars,"")
 
     # Download certificate for selected member and course.
-    download_certificate $user_id $course_id
+    $user_info = @{
+        'last' = $last_name;
+        'first' = $first_name;
+        'id' = $user_id;
+    }
+    $course_info = @{
+        'id' = $cert_links[$menu_sel-1];
+        'folder' = $course_folder; 
+    }
+    download_certificate $user_info $course_info
 }
 
 # Download course completion certificate for all members.
@@ -333,9 +377,21 @@ function get_batch_certificates () {
         $last_name = $un[0]
         $user_details = get_user_details $last_name $first_name
         $user_id = $user_details[3]
+        $course_folder = "$certs_folder\"+($my_cs -replace $unsafe_chars,"")
 
         # Download certificate for selected member and course.
-        download_certificate $user_id $course_id
+        $user_info = @{
+            'last' = $last_name;
+            'first' = $first_name;
+            'id' = $user_id;
+        }
+        $course_info = @{
+            'id' = $course_id;
+            'folder' = $course_folder;
+        }
+
+        download_certificate $user_info $course_info
+                
     }
 }
 
@@ -356,26 +412,40 @@ function get_user_details($last_name, $first_name) {
 }
 
 # Download a course completion certificate.
-function download_certificate($user_id, $course_id){
+function download_certificate($user_info, $course_info) {
 
     if ((file_exists $certs_folder) -le 0) {
 		Write-Host "[*] Creating folder '$certs_folder' to store course completion certificates."
-		New-Item "$certs_folder" -Force -ItemType directory | Out-Null
+		New-Item $certs_folder -Force -ItemType directory | Out-Null
+	}
+
+    if ((file_exists $course_info.Item('folder')) -le 0) {
+		Write-Host "[*] Creating folder "$course_info.Item('folder')" to store course completion certificates."
+		New-Item $course_info.Item('folder') -Force -ItemType directory | Out-Null
 	}
 
     # Download certificate HTML body.
-    $url = "https://golearn.adls.af.mil/kc/certificate/aetc_cert_certif.asp?crs_ident=$course_id&kc_ident=kc0001&login=$user_id"
+    $url = "https://golearn.adls.af.mil/kc/certificate/aetc_cert_certif.asp?crs_ident="+$course_info.Item('id')+"&kc_ident=kc0001&login="+$user_info.Item('id')
     $referer = "https://golearn.adls.af.mil/kc/certificate/aetc_cert_certif.asp"
     $cert_response = Invoke-WebRequest -Uri $url -CertificateThumbprint $cert_thumb -WebSession $session -Headers @{'referer' = $referer} -Method 'POST' -Body $data
 
     # Change local paths to remote paths for constituent images in HTML body.
-    Write-Host "[+] Outputting Certificate for $last_name $course_id."
+    $base_filename = $user_info.Item('last') + '_' + $user_info.Item('first')
+    $html_file = $course_info.Item('folder')+"\$base_filename.html"
+    $jpg_file = $course_info.Item('folder')+"\$base_filename.jpg"
+    Write-Host "[+] Outputting Certificate for $base_filename."
     $image_array = @()
     ($cert_response -split "`n")| %{if ($_ -match '.*="([0-9A-Za-z_.]*(jpg|gif))".*') {if ($image_array -notcontains $matches[1]){$image_array += $matches[1]}}}
-    $final_out = ""
-    ($cert_response -split "`n") | %{foreach ($image in $image_array){if ($_ -like "*$image*"){$_ = $_.Replace($image,"https://golearn.adls.af.mil/kc/certificate/$image")}}$final_out += $_} 
-    $outfile = "$certs_folder\" + "$user_id $course_id.html".Replace(" ","_")
-    $final_out | Out-File $outfile -Force
+    $modified_html = ""
+    ($cert_response -split "`n") | %{foreach ($image in $image_array){if ($_ -like "*$image*"){$_ = $_.Replace($image,"https://golearn.adls.af.mil/kc/certificate/$image")}}$modified_html += $_} 
+    $modified_html  | Out-File $html_file -Force
+
+    # Convert HTML to JPG, and remove HTML file.
+    $WebsiteToImage_object = New-Object WebsiteToImage("$html_file", "$jpg_file")
+    $WebsiteToImage_object.Generate() | Out-Null
+    Remove-Item "$html_file"
+
+    return
 }
 
 # Display menu of course-editing options.
